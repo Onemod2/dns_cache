@@ -2,7 +2,10 @@
 #include <array>
 #include <iostream>
 #include <list>
+#include <vector>
+#include <thread>
 #include <shared_mutex>
+#include <atomic>
 
 constexpr size_t default_cache_size = 17u;
 
@@ -56,6 +59,7 @@ private:
     }
   };
 
+  std::mutex _mutex;
   size_t _size = 0u;
   std::string _last_name;
   std::array<Batch, _Size> _data;
@@ -79,11 +83,15 @@ public:
 
   void update(const std::string &name, const std::string &ip) {
     auto& batch = get_batch(name);
-    if (_size == _Size && batch.resolve(name).empty()) {
-      get_batch(_last_name).remove(_last_name);
-      _size--;
+    if (batch.resolve(name).empty()) {
+      std::lock_guard guard(_mutex);
+      if (_size == _Size) {
+        get_batch(_last_name).remove(_last_name);
+        _size--;
+      }
     }
     if (!batch.update(name, ip)) {// if new element
+      std::lock_guard guard(_mutex);
       _size++;
       _last_name = name;
     }
@@ -94,12 +102,30 @@ public:
   }
 };
 
-int main() {
+void simple_act() {
   auto& dns_table = DNSCache<default_cache_size>::create();
   dns_table.resolve("test");
-  dns_table.update("test", "127.0.0.1");
-  dns_table.update("test", "127.0.0.2");
-  auto el = dns_table.resolve("test");
+  for (size_t i = 0; i < 100u; ++i) {
+    dns_table.update("test" + std::to_string(i), "127.0.0.1");
+  }
+  for (size_t i = 0; i < 100u; ++i) {
+    auto el = dns_table.resolve("test" + std::to_string(i));
+  }
+}
+
+void test() {
+  std::vector<std::thread> v;
+  for (size_t i = 0; i < 100u; ++i) {
+    v.emplace_back(simple_act);
+  }
+
+  for (auto& t : v) {
+    t.join();
+  }
+}
+
+int main() {
+  test(); 
 
   return 0;
 }
